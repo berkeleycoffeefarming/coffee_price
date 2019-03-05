@@ -1,0 +1,14 @@
+install.packages(
+  c("data.table", 
+    "here", 
+    "ggplot2",
+    "knitr", 
+    "gridExtra",
+    "kableExtra",
+    "fpp2", 
+    "scales",
+    "urca", 
+    "tempdisagg",
+    "vars",
+    "TSA")
+)
