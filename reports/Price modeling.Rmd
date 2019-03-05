@@ -1,0 +1,715 @@
+---
+title: "Coffee price modeling"
+output: html_notebook
+---
+
+# ICO: coffee prices  
+## Indicative coffee prices  
+
+```{r libraries}
+library(data.table) #tabular data manipulation library
+library(here)       #project file system organizational library
+library(ggplot2)    #plotting
+library(knitr)      #RMarkdown knitting library
+library(gridExtra)  #Additional functions for ggplot2
+library(kableExtra) #Table styling for RMarkdown
+library(fpp2)       #Time Series modeling library
+library(scales)     #Formatting functions
+library(urca)
+library(tempdisagg)
+library(vars)
+
+#other used libraries urca, TSA
+```
+
+
+```{r data}
+source(here::here("scripts/data processing/data_processing.R"))
+prices = read_indicative_prices()
+grower_prices = read_grower_prices()
+exportable_production = read_exportable_production()
+total_production = read_total_production()
+consumption = read_consumption()
+inventories = read_inventories()
+
+coffee_types = unique(total_production$CoffeeType)
+
+plot_coffee_ts = function(ts_list, measure){
+  plot_list = 
+    lapply(
+      coffee_types,
+      function(coffee_type){
+        autoplot(ts_list[[coffee_type]])+
+          theme_minimal()+
+          xlab("")+
+          ylab(measure)+
+          ggtitle(coffee_type)
+      }
+    )
+  
+  do.call("grid.arrange", c(plot_list, ncol = 2))
+}
+```
+
+```{r fig.height=3, fig.width=6}
+ggplot(prices)+
+  geom_line(aes(x = Month, y=Indicative_Price, color=CoffeeType))+
+  theme_minimal()+
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y")+
+  xlab("")+
+  ylab("Price in US cents/lb")+
+  ggtitle("Nominal coffee indicative price reported by ICO")
+```
+Looking at the price graph for the past 27 years it is obvious that coffee prices for different varieties are closely correlated. But robustas are diverged slightly from the arabicas in the past 10 years and not have such strong spikes in the prices.    
+
+Since we are working on price data, to avoid inflation related issues we should normalize prices.   
+World Bank's Consumer Price Index data was used for rescaling.  
+
+```{r fig.height=3, fig.width=6}
+ggplot(prices)+
+  geom_line(aes(x = Month, y=Constant2010Price, color=CoffeeType))+
+  theme_minimal()+
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y")+
+  xlab("")+
+  ylab("Price in US cents/lb")+
+  ggtitle("Constant 2010 coffee indicative price reported by ICO")
+```
+
+Going forward all modeling and evaluation of price will be done using Constant 2010 USD.  
+
+As with majority of price time series, they 
+```{r fig.height=3, fig.width=6}
+ggAcf(diff(prices[CoffeeType=="Robustas"]$Constant2010Price))
+```
+
+
+If we look and Cross-Correlation between price time series we will see an almost 1 correlation at lag 0 for majority of arabicas and near 0.6-0.8 correlation of Robustas with Arabicas variations. 
+```{r}
+ts_price_list = 
+  lapply(
+    coffee_types,
+    function(name){
+      return(
+        ts(prices[CoffeeType == name][order(Month)]$Constant2010Price,
+             start = min(year(prices$Month)), frequency = 12
+        )
+      )
+    }
+  )
+names(ts_price_list) = coffee_types
+
+plot_list = list()
+i = 1;
+for (coffee_type in names(ts_price_list)){
+  for (coffee_type_2 in names(ts_price_list)){
+
+    p = ggCcf(unlist(ts_price_list[[coffee_type]]), unlist(ts_price_list[[coffee_type_2]]))+
+      theme_minimal()+
+      ggtitle("")+
+      xlab("")+
+      ylab("")
+    
+    plot_list[[i]] = p
+    i = i + 1
+  }
+}
+
+do.call("grid.arrange", c(plot_list, ncol = 4, top = "Robustas, Brazilian Naturals, Other Milds, Colombian Milds"))
+```
+
+## Prices paid to growers    
+Similarly to indicative prices, we rescaled prices paid to growers to Constant 2010 USD.  
+Prices paid to growers vary significantly across exporter countries.  
+```{r results='asis'}
+grower_prices[Year == 2016][, .(
+  MinPrice = min(Price), 
+  AvgPrice = mean(Price), 
+  PriceSd = sd(Price),
+  MaxPrice = max(Price)
+), by=CoffeeType]%>%
+  kable(format="html", col.names = c("Coffee","Min", "Avg", "SD", "Max"))%>%
+  kable_styling(bootstrap_options = c("striped"), full_width = FALSE)%>%
+  add_header_above(header = c(" "=1, "Price" = 4))
+```
+
+
+Prices paid to growers are available on yearly average level, but even on this level we see that grower prices strongly correlate with international export prices and it is a question whether high grower prices push the international prices up or higher profit margins on international trade allows for higher grower prices to be paid locally.   
+
+```{r fig.height=3, fig.width=6}
+scaled_grower_prices = merge(
+  grower_prices, total_production,
+  by.x = c("Country", "CoffeeType", "Year"), by.y = c("Country", "CoffeeType", "Year"),
+  all.x = TRUE, all.y = FALSE
+)
+
+scaled_grower_prices = 
+  scaled_grower_prices[,.(
+    Price = sum(Constant2010Price * TotalProduction)/sum(TotalProduction)
+  ), by = .(CoffeeType, Year)]
+
+ts_grower_prices = 
+  lapply(
+    coffee_types,
+    function(name){
+      return(ts(scaled_grower_prices[CoffeeType == name][order(Year)]$Price, 
+                start = min(scaled_grower_prices$Year)))
+    }
+  )
+names(ts_grower_prices) = coffee_types
+
+ts_grower_prices_monthly = 
+  lapply(
+    coffee_types, 
+    function(name){
+      tss = ts_grower_prices[[name]]
+      tda = td(tss~1, conversion="average", to = "monthly", method="denton-cholette")
+      return(predict(tda))
+    }
+  )
+names(ts_grower_prices_monthly) = coffee_types
+ggplot(scaled_grower_prices)+
+  geom_line(aes(x = Year, y=Price, color=CoffeeType))+
+  theme_minimal()+
+  scale_x_continuous(breaks = seq(min(scaled_grower_prices$Year), max(scaled_grower_prices$Year)))+
+  xlab("")+
+  ylab("Price in US cents/lb")+
+  ggtitle("Total production weighted growers price for coffee types")
+```
+
+## Production  
+Certainly coffee prices are also dependent on supply side of the market dynamics. Over the past 27 years production of Brazilian Naturals and Robustas almost trippled, while production of Colombian Milds have stagnated.  
+
+```{r fig.height=3, fig.width=6}
+production_year_coffee = total_production[,.(TotalProduction = sum(TotalProduction)), by=.(Year, CoffeeType)]
+exportable_production_year_coffee = exportable_production[,.(TotalProduction = sum(TotalProduction)),
+                                                          by=.(Year,CoffeeType)]
+ggplot(production_year_coffee)+
+  geom_line(aes(x=Year, y = TotalProduction, group=CoffeeType, color=CoffeeType))+
+  scale_y_continuous(labels = comma)+
+  ylab("Total production in thousands 60kg bags")+
+  theme_minimal()
+```
+
+## Consumption   
+From the demand side ICO reports the following dynamics.  
+It appears that consumption increases almost linearly with very minor variation due to economic factors. Judging by the graphs it might not be necessary to model consumption of a particular coffee type as a function of world GDP.  
+
+```{r fig.height=3, fig.width=6}
+consumption_year_coffee = consumption[, .(Consumption = sum(Consumption)), by=.(Year, CoffeeType)]
+
+ggplot(consumption_year_coffee)+
+  geom_line(aes(x=Year, y=Consumption, group=CoffeeType, color=CoffeeType))+
+  xlab("")+
+  ylab("Consumption in thousand 60kg bags")+
+  scale_y_continuous(labels = comma)+
+  scale_x_continuous(breaks = seq(min(consumption_year_coffee$Year), max(consumption_year_coffee$Year)))+
+  ggtitle("Worldwide consumption of coffee types")+
+  theme_minimal()
+```
+
+```{r fig.height=3, fig.width=6}
+tmp = consumption[, .(Consumption = sum(Consumption)), by=.(Year, Country)]
+
+ggplot(tmp)+
+  geom_line(aes(x=Year, y=Consumption, group=Country, color=Country))+
+  xlab("")+
+  ylab("Consumption in thousand 60kg bags")+
+  scale_y_continuous(labels = comma)+
+  scale_x_continuous(breaks = seq(min(tmp$Year), max(tmp$Year)))+
+  ggtitle("Worldwide consumption of coffee types")+
+  theme_minimal()
+```
+
+## Inventories  
+ICO reports end of the year inventories at importer countries.   
+If we aggregate by coffee type we get the following available inventories.  
+```{r fig.height=4, fig.width=8}
+inventories_year_coffee = inventories[, .(Inventory = sum(Inventory)), by=.(Year, CoffeeType)]
+
+ggplot(inventories_year_coffee)+
+  geom_line(aes(x=Year, y=Inventory, group=CoffeeType, color=CoffeeType))+
+  xlab("")+
+  ylab("Inventory in thousand 60kg bags")+
+  scale_y_continuous(labels = comma)+
+  scale_x_continuous(breaks = seq(min(inventories_year_coffee$Year), max(inventories_year_coffee$Year)))+
+  ggtitle("Worldwide inventory of coffee types")+
+  theme_minimal()
+```
+
+  
+# Predicting coffee price   
+
+## Price seasonality and trend  
+To decompose price time series into trend and seasonal components we will use STL method, which stands for "Seasonal and Trend decomposition using Loess".  
+
+```{r fig.height=6, fig.width=6}
+plot_list = list()
+
+for (name in names(ts_price_list)){
+  plot_list[[name]] = 
+    ts_price_list[[name]] %>%
+    stl(t.window = 13, s.window = "periodic", robust=TRUE)%>%
+    autoplot()+
+    ggtitle(name)+
+    theme_minimal()    
+}
+
+do.call("grid.arrange", c(plot_list, ncol = 2))
+```
+
+From the graphs it is apparent that the seasonal component is not very strong in coffee price time series. This observation can be validated by measuring strength of trend/seasonal components in relation to residual.  
+$$
+F_{t}=max(0,1-\frac{Var(R_t)}{Var(T_t+R_t)})
+$$
+where $F_t$ - strength of trend, $R_t$ residuals and $T_t$ is trend.  
+
+```{r results='asis'}
+robusta_stl = stl(ts_price_list[["Robustas"]], t.window = 13, s.window = "periodic", robust=TRUE)
+
+trend_strength = function(stl_result){
+  return(
+    max(
+        0, 
+        1 - var(stl_result$time.series[,"remainder"])/
+              var(stl_result$time.series[,"trend"]+stl_result$time.series[,"remainder"])
+    )
+  )
+}
+
+seasonal_strength = function(stl_result){
+  return(
+    max(
+        0, 
+        1 - var(stl_result$time.series[,"remainder"])/
+              var(stl_result$time.series[,"seasonal"]+stl_result$time.series[,"remainder"])
+    )
+  )
+}
+
+rbindlist(
+lapply(coffee_types, 
+        function(name){
+  stl_result = stl(ts_price_list[[name]], t.window = 13, s.window = "periodic", robust=TRUE)
+  return(list(
+    CoffeeType = name,
+    TrendStrength = trend_strength(stl_result),
+    SeasonalStrength = seasonal_strength(stl_result)
+  ))
+}))%>%
+  kable(format="html", col.names = c("Coffee Type", "Trend strength", "Seasonal strength"))%>%
+  kable_styling(bootstrap_options = c("striped"), full_width = FALSE)
+```
+
+The seasonality strength is minimal in all price time series, as a result most of disagregations for other time series can ignore seasonality and be done using linear interpolations.  
+
+## Disaggregating yearly data to monthly level  
+Since our price data is on a monthly level it is preferable to model the prices on the same level. On another hand majority of our production and consumption data is on a yearly aggregated level.  
+There is a variety of statistical methods to disaggregate yearly data to monthly data, depending on a seasonality assumptions.  
+
+Trend-seasonal decomposition of price time series showed that price is does not have a strong seasonal component as a result we will use the basic disaggregation model. 
+
+### Price to growers  
+
+
+
+### Consumption  
+It is fair to assume that consumption of coffee doesn't have strong seasonal characteristics as such disaggregation model does not require seasonal indicator series.  
+
+```{r}
+ts_consumption_list = 
+  lapply(
+    coffee_types,
+    function(coffee_type){
+      return(
+        ts(consumption_year_coffee[CoffeeType == coffee_type][order(Year)]$Consumption,
+           start = min(consumption_year_coffee$Year))
+      )
+    }
+  )
+names(ts_consumption_list) = coffee_types
+
+ts_consumption_monthly_list = 
+  lapply(
+    coffee_types,
+    function(coffee_type){
+      tsd = ts_consumption_list[[coffee_type]]
+      return(predict(td(tsd ~ 1, to = "monthly", method = "denton-cholette", conversion = "sum")))
+    }
+  )
+names(ts_consumption_monthly_list) = coffee_types
+
+plot_list = 
+  lapply(
+    coffee_types,
+    function(coffee_type){
+      autoplot(ts_consumption_monthly_list[[coffee_type]])+
+        theme_minimal()+
+        xlab("")+
+        ylab("Consumption")+
+        ggtitle(coffee_type)
+    }
+  )
+
+do.call("grid.arrange", c(plot_list, ncol = 2))
+```
+
+
+### Exportable production  
+```{r}
+
+ts_production_list = 
+  lapply(
+    coffee_types,
+    function(coffee_type){
+      return(
+        ts(exportable_production_year_coffee[CoffeeType == coffee_type][order(Year)]$TotalProduction,
+         start = min(production_year_coffee$Year)
+        )
+      )
+    }
+)
+names(ts_production_list) = coffee_types
+
+ts_production_monthly_list = 
+  lapply(
+    coffee_types,
+    function(coffee_type){
+      tsd = ts_production_list[[coffee_type]]
+      return(predict(td(tsd ~ 1, to = "monthly", method = "denton-cholette", conversion = "sum")))
+    }
+  )
+names(ts_production_monthly_list) = coffee_types
+
+plot_list = 
+  lapply(
+    coffee_types,
+    function(coffee_type){
+      autoplot(ts_production_monthly_list[[coffee_type]])+
+        theme_minimal()+
+        xlab("")+
+        ylab("Production")+
+        ggtitle(coffee_type)
+    }
+  )
+
+do.call("grid.arrange", c(plot_list, ncol = 2))
+```
+
+## Stocks + Production - Consumption  
+A useful derived measure, that could be predictive of price fluctuations would be available inventory of coffee at particular month.  
+ICO reports on inventories at the end of the year in importer countries, we can disagregate end of the year stocks by indicative time series of cumulative production - consumption. 
+A predictor then would be a ratio between available stock and predicted yearly consumption.
+
+### Production - Consumption cumulatively within a year  
+Difference between prodution and consumption (Stock delta):    
+```{r}
+ts_stock_delta_list = 
+  lapply(
+    coffee_types, 
+    function(name){
+      return(ts_production_monthly_list[[name]] - ts_consumption_monthly_list[[name]])
+    }
+  )
+names(ts_stock_delta_list) = coffee_types
+
+plot_list = 
+  lapply(
+    coffee_types,
+    function(coffee_type){
+      autoplot(ts_stock_delta_list[[coffee_type]])+
+        theme_minimal()+
+        xlab("")+
+        ylab("Stock delta")+
+        ggtitle(coffee_type)
+    }
+  )
+
+do.call("grid.arrange", c(plot_list, ncol = 2))
+```
+
+Monthly stock estimates  
+
+```{r}
+cumsum_by_years = function(ts){
+  months = factor(cycle(ts), levels=1:12)
+  m = tapply(ts, list(year = floor(time(ts)), month=months), c)
+  m_sum = t(apply(m, 1, cumsum))
+  #m_sum = t(apply(m_sum, 1, scale))
+  return(ts(c(t(m_sum)), start = 1990, frequency = 12))
+}
+
+ts_stock_delta_cum_list = 
+  lapply(
+    coffee_types, 
+    function(name){
+      cumsum_by_years(ts_stock_delta_list[[name]])
+    }
+  )
+names(ts_stock_delta_cum_list) = coffee_types
+
+ts_stock_list = 
+  lapply(
+    coffee_types,
+    function(coffee_type){
+      return(
+        ts(inventories_year_coffee[CoffeeType == coffee_type][order(Year)]$Inventory,
+         start = min(inventories_year_coffee$Year)
+        )
+      )
+    }
+)
+names(ts_stock_list) = coffee_types
+
+ts_stock_monthly_list = 
+  lapply(
+    coffee_types,
+    function(coffee_type){
+      tsd = ts_stock_list[[coffee_type]]
+      stock_delta = ts_stock_delta_cum_list[[coffee_type]]
+      return(predict(td(tsd ~ 1, 
+                        to = "monthly", 
+                        conversion = "last", 
+                        method = "denton-cholette",
+                        criterion = "proportional")))
+    }
+  )
+names(ts_stock_monthly_list) = coffee_types
+
+plot_coffee_ts(ts_stock_monthly_list, "Stock monthly")
+```
+
+### Stock to consumption ratio  
+```{r}
+ts_stock_to_consumption_monthly_list = 
+  lapply(
+    coffee_types,
+    function(coffee_type){
+      return(
+        ts_stock_monthly_list[[coffee_type]] / ts_consumption_monthly_list[[coffee_type]]
+      )
+    }
+)
+names(ts_stock_to_consumption_monthly_list) = coffee_types
+
+plot_coffee_ts(ts_stock_to_consumption_monthly_list, "Stock/Consumption")
+```
+
+
+# Price models  
+
+We will start modeling coffee price with the simplest models to set a benchmark and then will slowly add seasonality and covariate complexity while controling predictive accuracy.  
+
+## Accuracy  
+
+For time series forecasting accuracy testing we will use cross-validation procedure on rolling forecasting origin with window of 4 (will be predicting 4 months ahead).  
+Accuracy will be measured using RMSE.  
+![optional caption text](images/ts_cv.png)
+
+
+## ARIMA  
+Let's start by modeling coffee prices as separate time series using ARIMA without any covariates.  
+First we need to check if our time series is non-stationary and requires differencing, we will do that by applying a series of KPSS tests.  
+
+```{r}
+p1_test = ts_price_list[["Robustas"]]%>%ur.kpss()
+p2_test = ts_price_list[["Robustas"]] %>% diff() %>% ur.kpss()
+
+p1 = ts_price_list[["Robustas"]]%>%autoplot()+
+  theme_minimal()+
+  ggtitle(paste0("Price, KPSS statistic: ", round(p1_test@teststat, 4), ", 1% sig. ", p1_test@cval[4]))
+p2 = ts_price_list[["Robustas"]]%>%diff()%>%autoplot()+
+  theme_minimal()+
+  ggtitle(paste0("First difference, KPSS statistic: ", round(p2_test@teststat, 4), ", 1% sig. ", p2_test@cval[4]))
+
+grid.arrange(p1, p2, ncol=1)
+```
+
+
+```{r}
+differencing_required = ndiffs(ts_price_list[["Robustas"]])
+seasonal_differencing_required = nsdiffs(ts_price_list[["Robustas"]])
+```
+
+KPSS tests showed that `r differencing_required` main differencing is required, but no seasonal differencing is required for price time series (mostly due to negligible seasonal effects).
+
+ARIMA models have order parameters {p, d, q}:  
+-  p - order of autoregressive part  
+-  d - degree of first differencing involved  
+-  q - order of the moving average part  
+
+```{r fig.height=3, fig.width=6}
+cutoff_date = c(2016,6)
+
+plot_list = 
+  lapply(
+    coffee_types,
+    function(name){
+      a = auto.arima(window(ts_price_list[[name]], end=cutoff_date))
+      #a = forecast::Arima(window(ts_price_list[[name]], end=cutoff_date), order = c(6,1,0))
+      order = arimaorder(a)
+      
+      return(
+        autoplot(ts_price_list[[name]])+
+          autolayer(forecast(a, h=24), 
+                    series=paste0("ARIMA(", paste(arimaorder(a), collapse=","), ")"), 
+                    PI=FALSE)+
+          theme_minimal()
+      )
+    }
+  )
+
+do.call("grid.arrange", c(plot_list, ncol = 2))
+```
+### Baseline accuracy results:   
+```{r results='asis'}
+basic_arima_forecast = function(ts, h){
+  arima_fit = Arima(ts, order = c(2,1,2))
+  return(forecast(arima_fit, h = h))
+}
+
+test_accuracy = function(ts, forecast_func, name, ...){
+  e = tsCV(ts, forecast_func, h=4, window = 120, ...)
+  RMSE <-
+    e^2 %>% mean(na.rm = TRUE) %>% sqrt()
+  
+  return(data.table(Model = name, RMSE = RMSE)) 
+}
+
+tests =
+rbindlist(
+  lapply(
+    coffee_types, 
+    function(name){
+      return(test_accuracy(ts_price_list[[name]], basic_arima_forecast, "ARIMA(2,1,2)")[, CoffeeType:=name])
+    }
+  )
+)
+
+tests %>% data.table::dcast(
+  Model ~ CoffeeType, value.var = "RMSE"
+) %>%
+  kable(type = "html")%>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped"))
+```
+
+## Adding covariates - ARIMAX 
+
+### Price cross-correlations  
+Hypothesis: price time series for various coffee types are cointegrated. 
+
+```{r}
+jotest = urca::ca.jo(
+  data.frame(
+    BrazilianNaturals = diff(as.vector(ts_price_list[["Brazilian Naturals"]])),
+    ColombianMilds = diff(as.vector(ts_price_list[["Colombian Milds"]])),
+    OtherMilds = diff(as.vector(ts_price_list[["Other Milds"]]))
+  ),
+  type = "trace",
+  K=2,
+  ecdet = "none",
+  spec = "transitory"
+)
+summary(jotest)
+```
+Test statistic at r = 0, shows that there
+
+### Price to Growers  
+All of the following cross correlation analysis is done using "pre-whitening" approach, with the following steps:  
+1. Determine a time series model for the x-variable and store the residuals from this model.    
+2. Filter the y-variable series using the x-variable model (using the estimated coefficients from step 1). In this step we find differences between observed y-values and "estimated" y-values based on the x-variable model.  
+3. Examine CFF between the residuals from Step 1 and the filtered y-values from Step 2. This CFF can be used to identify the possible terms for a lagged regression.   
+```{r}
+check_ccf = function(ts_list){
+  lapply(
+    coffee_types,
+    function(name){
+      pw = TSA::prewhiten(
+        ts_list[[name]],
+        ts_price_list[[name]]
+      )
+      
+      p = 
+        autoplot(pw$ccf)+
+          theme_minimal()+
+          ggtitle(name)
+      
+      return(p)
+    }
+  )
+}
+
+plot_list = check_ccf(ts_grower_prices_monthly)
+
+
+do.call("grid.arrange", c(plot_list, ncol = 2))
+```
+
+### Production  
+Let's check for optimal lag using CCF:
+
+```{r}
+plot_list = check_ccf(ts_production_monthly_list)
+
+do.call("grid.arrange", c(plot_list, ncol = 2))
+```
+There is no definitive correlation structure between production and price for all coffee types, so most likely correlation that we see are spurious.   
+
+### Stock to Consumption  
+Let's check for optimal lag using CCF:
+
+```{r}
+plot_list = check_ccf(ts_stock_to_consumption_monthly_list)
+
+do.call("grid.arrange", c(plot_list, ncol = 2))
+```
+Very interesting correlation structure, that says that price today is based on the estimated available stock 6 months down the line.  The only exception is Colombian Milds, which don't show strong correlations within reasonable lags.  
+
+
+```{r}
+coffee_type = "Brazilian Naturals"
+
+
+
+lagged_stock_consumption = data.table(
+  StockConsumptionLag0 = as.vector(ts_stock_to_consumption_monthly_list[[coffee_type]])
+)
+lagged_stock_consumption[, `:=`(
+  StockConsumptionLag1 = data.table::shift(StockConsumptionLag0, type = "lag", n=6),
+  StockConsumptionLag2 = data.table::shift(StockConsumptionLag0, type = "lag", n=12),
+  StockConsumptionLag3 = data.table::shift(StockConsumptionLag0, type = "lag", n=13)
+)]
+
+fit1 = Arima(ts_price_brazilian_naturals[14:336], xreg = lagged_stock_consumption[14:336,1], order = c(0,1,2))
+fit2 = Arima(ts_price_brazilian_naturals[14:336], xreg = lagged_stock_consumption[14:336,2], order = c(0,1,2))
+fit3 = Arima(ts_price_brazilian_naturals[14:336], xreg = lagged_stock_consumption[14:336,3], order = c(0,1,2))
+fit4 = Arima(ts_price_brazilian_naturals[14:336], xreg = lagged_stock_consumption[14:336,4], order = c(0,1,2))
+
+c(fit1[['aicc']], fit2[['aicc']], fit3[['aicc']], fit4[['aicc']])
+
+summary(fit1)
+summary(fit2)
+summary(fit3)
+summary(fit4)
+```
+
+```{r}
+arimax_forecast = function(ts, h, xreg){
+  arima_xreg_fit = Arima(ts, order = c(0,1,2), xreg = xreg[1:length(ts)])
+  return(forecast(arima_xreg_fit, h = h, xreg = xreg[(length(ts)+1):(length(ts)+h)]))
+}
+
+test_accuracy
+
+e = tsCV(
+  ts_price_robustas[1:336], 
+  arimax_forecast,
+  h=4, 
+  window = 120,
+  xreg = ts_stock_to_consumption_monthly_list[["Robustas"]])
+
+e^2 %>% mean(na.rm = TRUE) %>% sqrt()
+```
+
+
+
+

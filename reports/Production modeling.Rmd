@@ -1,0 +1,14 @@
+---
+title: "Production modeling"
+output: html_notebook
+---
+
+```{r}
+library(RNetCDF)
+library(here)
+
+a = open.nc(gzfile(here::here("data/raw/weather/cru_ts4.02.1981.1990.cld.dat.nc.gz")))
+untar(here::here("data/raw/weather/cru_ts4.02.1981.1990.cld.dat.nc.gz"))
+```
+
+
