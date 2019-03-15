@@ -4,11 +4,47 @@ output: html_notebook
 ---
 
 ```{r}
-library(RNetCDF)
+library(data.table)
 library(here)
+library(ggplot2)
+library(scales)
 
-a = open.nc(gzfile(here::here("data/raw/weather/cru_ts4.02.1981.1990.cld.dat.nc.gz")))
-untar(here::here("data/raw/weather/cru_ts4.02.1981.1990.cld.dat.nc.gz"))
+
+source(here::here("scripts/data processing/data_processing.R"))
+```
+
+# Production regions  
+```{r}
+growing_locations = read_growing_locations_cells()
+```
+
+```{r fig.height=2, fig.width=7}
+world_map = map_data("world")
+
+ggplot(world_map)+
+  geom_polygon(aes(x = long, y = lat, group = group), fill = "lightgrey", color = "black")+
+  coord_fixed(1.3)+
+  theme_minimal()+
+  geom_point(data = growing_locations, aes(x = Longitude, y = Latitude, color=CoffeeType), alpha=0.4)+
+  scale_x_continuous(
+    limits = c(min(growing_locations$Longitude)-3, max(growing_locations$Longitude)+3), 
+    oob = rescale_none,
+    breaks = NULL
+  )+
+  scale_y_continuous(
+    limits = c(min(growing_locations$Latitude)-2, max(growing_locations$Latitude)+2), 
+    oob = rescale_none,
+    breaks = NULL
+  )+
+  ylab("")+
+  xlab("")+
+  theme(legend.title = element_blank())
 ```
 
 
+# Weather 
+
+
+
+
+# Per country production modeling  

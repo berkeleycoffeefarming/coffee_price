@@ -10,5 +10,6 @@ install.packages(
     "urca", 
     "tempdisagg",
     "vars",
-    "TSA")
+    "TSA",
+    "RNetCDF")
 )

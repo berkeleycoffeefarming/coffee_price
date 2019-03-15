@@ -123,10 +123,37 @@ $(document).ready(function () {
 
 <div id="coffee-prices-modeling" class="section level1">
 <h1>Coffee prices modeling</h1>
+<div id="project-structure" class="section level2">
+<h2>Project structure</h2>
+<p>/data - contains raw and processed data. Some of the files are read “raw”, as they don’t require lengthly processing<br />
+/data/raw<br />
+/data/raw/weather<br />
+/data/processed<br />
+/data/processed/weather<br />
+/documents - some suplementary documents.<br />
+/reports - contains .Rmd files, that generate analytical reports for this project.<br />
+/scripts - various functions, that are used by the reports and fitting procedures.</p>
+</div>
+<div id="modeling-approach" class="section level2">
+<h2>Modeling approach</h2>
+<p>It is reasonable to assume that price in a free market is a function of supply and demand.<br />
+In it’s own way supply and demand can be modeled somewhat separately, so in the end we have a hierarchical model of coffee prices:<br />
+1. Demand time series model. a. One model for every major consumer market. Bottom up aggregation to total global demand.<br />
+b. Covariates to test: price, GDP, consumer basket price<br />
+2. Production time series model. a. One model for every major production area. Bottom up aggregation to global production. b. Covariates to test: weather indicators, coffee price for previous seasons<br />
+3. Price time series model. a. VARMAX model for time series of different coffee type prices.<br />
+b. Covariates to test: Combine demand and supply predictions from models 1 and 2. Prices for previous periods.</p>
+<p>It is important to</p>
+</div>
 <div id="data-sources" class="section level2">
 <h2>Data Sources</h2>
-<p>Files from International Coffee Organization<br />
-Url: <a href="http://www.ico.org/new_historical.asp" class="uri">http://www.ico.org/new_historical.asp</a><br />
+<div id="files-from-world-bank-group" class="section level3">
+<h3>Files from World Bank Group:</h3>
+<p>Url: <a href="https://data.worldbank.org/" class="uri">https://data.worldbank.org/</a> - Consumer price index (2010 = 100). Is used to transform nominal prices of coffee to constant 2010 USD prices.</p>
+</div>
+<div id="files-from-international-coffee-organization" class="section level3">
+<h3>Files from International Coffee Organization</h3>
+<p>Url: <a href="http://www.ico.org/new_historical.asp" class="uri">http://www.ico.org/new_historical.asp</a><br />
 - data/raw/Dissapearance.xlsx - an estimation of consumption (yearly)<br />
 - data/raw/Domestic consumption.xlsx - coffee consumption in coffee growing countries (yearly)<br />
 - data/raw/Exportable production.xlsx - coffee exportable production after internal consumption (yearly)<br />
@@ -139,6 +166,50 @@ Url: <a href="http://www.ico.org/new_historical.asp" class="uri">http://www.ico.
 - data/raw/Prices paid to growers.xlsx - yearly average prices paid to growers (yearly)<br />
 - data/raw/Re-exports.xlsx - processed coffee exports (yearly)<br />
 - data/raw/Total production.xlsx - total production by crop year (yearly)</p>
+<p>Documentation: <a href="http://www.ico.org/documents/cy2014-15/sc-59e-data-concepts.pdf" class="uri">http://www.ico.org/documents/cy2014-15/sc-59e-data-concepts.pdf</a> - documents/cru_ts4.02.1981.1990.tmp.dat.nc.pdf - statistics glossary for ICO</p>
+</div>
+<div id="weather-files-from-climatic-research-unit" class="section level3">
+<h3>Weather files from Climatic Research Unit</h3>
+<p>Url: <a href="https://crudata.uea.ac.uk/cru/data/hrg/" class="uri">https://crudata.uea.ac.uk/cru/data/hrg/</a><br />
+– data/raw/weather/cru_ts4.02.[YYYY].[YYYY].<b>cld</b>.dat.nc.gz - cloud cover, in %, over a month<br />
+– data/raw/weather/cru_ts4.02.[YYYY].[YYYY].<b>dtr</b>.dat.nc.gz - diurnal temperature range, in celsius, average over a month<br />
+– data/raw/weather/cru_ts4.02.[YYYY].[YYYY].<b>frs</b>.dat.nc.gz - frost day frequency, in days in a month<br />
+– data/raw/weather/cru_ts4.02.[YYYY].[YYYY].<b>pet</b>.dat.nc.gz - potential evapotranspiration, milimiters per day<br />
+– data/raw/weather/cru_ts4.02.[YYYY].[YYYY].<b>pre</b>.dat.nc.gz - precipitation, milimiters per month<br />
+– data/raw/weather/cru_ts4.02.[YYYY].[YYYY].<b>rhm</b>.dat.nc.gz - relative humidity, in %<br />
+– data/raw/weather/cru_ts4.02.[YYYY].[YYYY].<b>tmp</b>.dat.nc.gz - daily mean temperature, in celsius<br />
+– data/raw/weather/cru_ts4.02.[YYYY].[YYYY].<b>tmn</b>.dat.nc.gz - monthly average daily minimum temperature, in celsius<br />
+– data/raw/weather/cru_ts4.02.[YYYY].[YYYY].<b>tmx</b>.dat.nc.gz - monthly average daily maximum temperature, in celsius<br />
+– data/raw/weather/cru_ts4.02.[YYYY].[YYYY].<b>vap</b>.dat.nc.gz - vapour pressure, in hectopascals (hPa)<br />
+– data/raw/weather/cru_ts4.02.[YYYY].[YYYY].<b>wet</b>.dat.nc.gz - wet day frequency, in days</p>
+<p>Weather data is in NetCDF format, which makes it bit tricky to read.<br />
+On a mac the easiest way is to follow this procedure: <a href="http://geog.uoregon.edu/bartlein/courses/geog490/install_netCDF.html" class="uri">http://geog.uoregon.edu/bartlein/courses/geog490/install_netCDF.html</a><br />
+Afterwards you can use R package called RNetCDF</p>
+</div>
+<div id="coffee-growing-regions-gps" class="section level3">
+<h3>Coffee growing regions gps:</h3>
+</div>
+<div id="coffee-harvest-and-shipment-seasonality" class="section level3">
+<h3>Coffee harvest and shipment seasonality:</h3>
+</div>
+</div>
+<div id="data-processing" class="section level2">
+<h2>Data processing</h2>
+<p>– All indicator prices need to be transformed to constant 2010 USD prices.</p>
+</div>
+<div id="code-execution-sequence" class="section level2">
+<h2>Code execution sequence</h2>
+<ol style="list-style-type: decimal">
+<li>Make sure to install all of the neccessary R packages, by running install_packages.R in the root folder of the project.<br />
+</li>
+<li>Run preprocess_data.R file. It will process and filter weather records into easier to use format.<br />
+</li>
+<li>Run train_models.R file. It will train the production, demand and price models.<br />
+</li>
+<li>Run(knit) files in reports folder: reports/Production modeling.Rmd, reports/Demand modeling.Rmd, reports/Price modeling.Rmd<br />
+</li>
+<li>This will produce *.html reports with the same names.</li>
+</ol>
 </div>
 </div>
 
